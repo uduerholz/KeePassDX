@@ -58,10 +58,11 @@ class DatabaseInputKDB(cacheDirectory: File,
                               keyfileInputStream: InputStream?,
                               loadedCipherKey: LoadedKey,
                               progressTaskUpdater: ProgressTaskUpdater?,
-                              fixDuplicateUUID: Boolean): DatabaseKDB {
+                              fixDuplicateUUID: Boolean,
+                              yubiResponse: ByteArray?): DatabaseKDB {
         return openDatabase(databaseInputStream, progressTaskUpdater, fixDuplicateUUID) {
             mDatabase.binaryCache.loadedCipherKey = loadedCipherKey
-            mDatabase.retrieveMasterKey(password, keyfileInputStream)
+            mDatabase.retrieveMasterKey(password, keyfileInputStream, null)
         }
     }
 

@@ -99,18 +99,24 @@ abstract class DatabaseVersioned<
     }
 
     @Throws(IOException::class)
-    protected abstract fun getMasterKey(key: String?, keyInputStream: InputStream?): ByteArray
+    protected abstract fun deriveMasterKey(password: String?, keyInputStream: InputStream?, yubikeyResponse: ByteArray?): ByteArray
 
     @Throws(IOException::class)
-    fun retrieveMasterKey(key: String?, keyfileInputStream: InputStream?) {
-        masterKey = getMasterKey(key, keyfileInputStream)
+    fun retrieveMasterKey(password: String?, keyfileInputStream: InputStream?, yubikeyResponse: ByteArray?) {
+        masterKey = deriveMasterKey(password, keyfileInputStream, yubikeyResponse)
     }
 
     @Throws(IOException::class)
-    protected fun getCompositeKey(key: String, keyfileInputStream: InputStream): ByteArray {
-        val fileKey = getFileKey(keyfileInputStream)
-        val passwordKey = getPasswordKey(key)
-        return HashManager.hashSha256(passwordKey, fileKey)
+    protected fun getCompositeKey(password: String, keyfileInputStream: InputStream): ByteArray {
+        val part1 = getPasswordKey(password)
+        val part2 = getFileKey(keyfileInputStream)
+        return HashManager.hashSha256(part1, part2)
+    }
+
+    protected fun getCompositeKey(password: String, yubikeyResponse: ByteArray): ByteArray {
+        val part1 = getPasswordKey(password)
+        val part2 = HashManager.hashSha256(yubikeyResponse)
+        return HashManager.hashSha256(part1, part2)
     }
 
     @Throws(IOException::class)

@@ -20,6 +20,8 @@
 package com.kunzisoft.keepass.activities
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -34,7 +36,9 @@ import android.view.KeyEvent.KEYCODE_ENTER
 import android.view.inputmethod.EditorInfo.IME_ACTION_DONE
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
@@ -52,8 +56,11 @@ import com.kunzisoft.keepass.autofill.AutofillComponent
 import com.kunzisoft.keepass.autofill.AutofillHelper
 import com.kunzisoft.keepass.biometric.AdvancedUnlockFragment
 import com.kunzisoft.keepass.database.element.Database
+import com.kunzisoft.keepass.database.element.database.DatabaseKDBX
 import com.kunzisoft.keepass.database.exception.DuplicateUuidDatabaseException
 import com.kunzisoft.keepass.database.exception.FileNotFoundDatabaseException
+import com.kunzisoft.keepass.database.exception.LoadDatabaseException
+import com.kunzisoft.keepass.database.file.DatabaseHeaderKDBX
 import com.kunzisoft.keepass.education.PasswordActivityEducation
 import com.kunzisoft.keepass.model.MainCredential
 import com.kunzisoft.keepass.model.RegisterInfo
@@ -72,7 +79,10 @@ import com.kunzisoft.keepass.view.KeyFileSelectionView
 import com.kunzisoft.keepass.view.asError
 import com.kunzisoft.keepass.viewmodels.AdvancedUnlockViewModel
 import com.kunzisoft.keepass.viewmodels.DatabaseFileViewModel
+import java.io.BufferedInputStream
 import java.io.FileNotFoundException
+import java.io.IOException
+import java.io.InputStream
 
 
 class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderListener {
@@ -83,6 +93,7 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
     private var passwordView: EditText? = null
     private var keyFileSelectionView: KeyFileSelectionView? = null
     private var confirmButtonView: Button? = null
+    private var yubikeyButtonView: Button? = null
     private var checkboxPasswordView: CompoundButton? = null
     private var checkboxKeyFileView: CompoundButton? = null
     private var infoContainerView: ViewGroup? = null
@@ -95,6 +106,7 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
     private var mDefaultDatabase: Boolean = false
     private var mDatabaseFileUri: Uri? = null
     private var mDatabaseKeyFileUri: Uri? = null
+    private var mChallenge: ByteArray? = null
 
     private var mRememberKeyFile: Boolean = false
     private var mExternalFileHelper: ExternalFileHelper? = null
@@ -115,6 +127,35 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             AutofillHelper.buildActivityResultLauncher(this)
         else null
+
+    private var mChallengeResponseActivityResultLauncher: ActivityResultLauncher<Intent>? = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
+        Log.d(TAG, "resultCode from ykdroid: " + result.resultCode)
+        if (result.resultCode == Activity.RESULT_OK) {
+            val response: ByteArray? = result.data?.getByteArrayExtra("response")
+            Log.d(TAG, "Response from yubikey: " + response.contentToString())
+            response?.let {
+                verifyCheckboxesAndLoadDatabase(response)
+            }
+        }
+    }
+
+    /*
+     * seed: 32 byte transform seed, needs to be padded before sent to the yubikey
+     */
+    fun launchYubikeyActivity(seed: ByteArray) {
+        val challenge = ByteArray(64)
+        System.arraycopy(seed, 0, challenge, 0, 32)
+        challenge.fill(32, 32, 64)
+        val intent = Intent("net.pp3345.ykdroid.intent.action.CHALLENGE_RESPONSE");
+        Log.d(TAG, "Challenge sent to yubikey: " + challenge.contentToString())
+        intent.putExtra("challenge", challenge)
+        mChallenge = challenge
+        try {
+            mChallengeResponseActivityResultLauncher?.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.e(TAG, "No activity to handle CHALLENGE_RESPONSE intent")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -224,6 +265,15 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
 
             onDatabaseFileLoaded(databaseFile?.databaseUri, keyFileUri)
         }
+
+        yubikeyButtonView = findViewById(R.id.activity_password_yubikey_button)
+        val transformSeed = getTransformSeedFromHeader(mDatabaseFileUri!!, applicationContext.contentResolver)
+
+        yubikeyButtonView?.setOnClickListener {
+            transformSeed?.let {
+                launchYubikeyActivity(transformSeed)
+            }
+        }
     }
 
     override fun onResume() {
@@ -248,6 +298,14 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
         mDatabase?.let { database ->
             launchGroupActivityIfLoaded(database)
         }
+
+    }
+
+    override fun onPause() {
+        // Reinit locking activity UI variable
+        DatabaseLockActivity.LOCKING_ACTIVITY_UI_VISIBLE_DURING_LOCK = null
+
+        super.onPause()
     }
 
     override fun onDatabaseRetrieved(database: Database?) {
@@ -496,13 +554,6 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
         }
     }
 
-    override fun onPause() {
-        // Reinit locking activity UI variable
-        DatabaseLockActivity.LOCKING_ACTIVITY_UI_VISIBLE_DURING_LOCK = null
-
-        super.onPause()
-    }
-
     override fun onSaveInstanceState(outState: Bundle) {
         mDatabaseKeyFileUri?.let {
             outState.putString(KEY_KEYFILE, it.toString())
@@ -515,6 +566,52 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
         val password: String? = passwordView?.text?.toString()
         val keyFile: Uri? = keyFileSelectionView?.uri
         verifyCheckboxesAndLoadDatabase(password, keyFile, cipherDatabaseEntity)
+    }
+
+    private fun verifyCheckboxesAndLoadDatabase(yubikeyResponse: ByteArray, cipherDatabaseEntity: CipherDatabaseEntity? = null) {
+        val keyPassword = if (checkboxPasswordView?.isChecked != true) null else passwordView?.text?.toString()
+        val keyFile = if (checkboxKeyFileView?.isChecked != true) null else keyFileSelectionView?.uri
+        mReadOnly = true
+        loadDatabase(mDatabaseFileUri, keyPassword, keyFile, cipherDatabaseEntity, yubikeyResponse)
+    }
+
+    private fun getTransformSeedFromHeader(uri: Uri, contentResolver: ContentResolver): ByteArray? {
+        var databaseInputStream: InputStream? = null
+        var challenge: ByteArray? = null
+
+        try {
+            // Load Data, pass Uris as InputStreams
+            val databaseStream = UriUtil.getUriInputStream(contentResolver, uri)
+                    ?: throw IOException("Database input stream cannot be retrieve")
+
+            databaseInputStream = BufferedInputStream(databaseStream)
+            if (!databaseInputStream.markSupported()) {
+                throw IOException("Input stream does not support mark.")
+            }
+
+            // We'll end up reading 8 bytes to identify the header. Might as well use two extra.
+            databaseInputStream.mark(10)
+
+            // Return to the start
+            databaseInputStream.reset()
+
+            val mDatabase = DatabaseKDBX()
+            val header = DatabaseHeaderKDBX(mDatabase)
+
+            header.loadFromFile(databaseInputStream)
+
+            challenge = ByteArray(64)
+            System.arraycopy(header.transformSeed, 0, challenge, 0, 32)
+            challenge.fill(32, 32, 64)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not read transform seed from file")
+            // throw LoadDatabaseException(e)
+        } finally {
+            databaseInputStream?.close()
+        }
+
+        return challenge
     }
 
     private fun verifyCheckboxesAndLoadDatabase(password: String?,
@@ -538,7 +635,8 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
     private fun loadDatabase(databaseFileUri: Uri?,
                              password: String?,
                              keyFileUri: Uri?,
-                             cipherDatabaseEntity: CipherDatabaseEntity? = null) {
+                             cipherDatabaseEntity: CipherDatabaseEntity? = null,
+                             yubiResponse: ByteArray? = null) {
 
         if (PreferencesUtil.deletePasswordAfterConnexionAttempt(this)) {
             clearCredentialsViews()
@@ -557,7 +655,7 @@ class PasswordActivity : DatabaseModeActivity(), AdvancedUnlockFragment.BuilderL
                 // Show the progress dialog and load the database
                 showProgressDialogAndLoadDatabase(
                         databaseUri,
-                        MainCredential(password, keyFileUri),
+                        MainCredential(password, keyFileUri, yubiResponse),
                         mReadOnly,
                         cipherDatabaseEntity,
                         false)

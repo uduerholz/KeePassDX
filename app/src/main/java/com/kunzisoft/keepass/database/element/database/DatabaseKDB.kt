@@ -124,13 +124,15 @@ class DatabaseKDB : DatabaseVersioned<Int, UUID, GroupKDB, EntryKDB>() {
     }
 
     @Throws(IOException::class)
-    override fun getMasterKey(key: String?, keyInputStream: InputStream?): ByteArray {
+    override fun deriveMasterKey(password: String?, keyInputStream: InputStream?, yubikeyResponse: ByteArray?): ByteArray {
 
-        return if (key != null && keyInputStream != null) {
-            getCompositeKey(key, keyInputStream)
-        } else if (key != null) { // key.length() >= 0
-            getPasswordKey(key)
-        } else if (keyInputStream != null) { // key == null
+        return if (password != null && keyInputStream != null) {
+            getCompositeKey(password, keyInputStream)
+        } else if (password != null && yubikeyResponse != null) {
+            getCompositeKey(password, yubikeyResponse)
+        } else if (password != null) {
+            getPasswordKey(password)
+        } else if (keyInputStream != null) {
             getFileKey(keyInputStream)
         } else {
             throw IllegalArgumentException("Key cannot be empty.")

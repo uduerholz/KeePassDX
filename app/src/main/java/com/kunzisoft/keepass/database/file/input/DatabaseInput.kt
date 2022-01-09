@@ -51,7 +51,8 @@ abstract class DatabaseInput<D : DatabaseVersioned<*, *, *, *>>
                               keyfileInputStream: InputStream?,
                               loadedCipherKey: LoadedKey,
                               progressTaskUpdater: ProgressTaskUpdater?,
-                              fixDuplicateUUID: Boolean = false): D
+                              fixDuplicateUUID: Boolean = false,
+                              yubiResponse: ByteArray? = null): D
 
 
     @Throws(LoadDatabaseException::class)

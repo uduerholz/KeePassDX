@@ -23,9 +23,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.res.Resources
 import android.net.Uri
-import android.os.Build
 import android.util.Log
-import com.kunzisoft.keepass.app.database.FileDatabaseHistoryAction
 import com.kunzisoft.keepass.database.action.node.NodeHandler
 import com.kunzisoft.keepass.database.crypto.EncryptionAlgorithm
 import com.kunzisoft.keepass.database.crypto.kdf.KdfEngine
@@ -610,7 +608,8 @@ class Database {
                                         keyFileInputStream,
                                         tempCipherKey,
                                         progressTaskUpdater,
-                                        fixDuplicateUUID)
+                                        fixDuplicateUUID,
+                                        mainCredential.yubikeyResponse)
                     }
             )
         } catch (e: FileNotFoundException) {
@@ -836,9 +835,9 @@ class Database {
     }
 
     @Throws(IOException::class)
-    fun retrieveMasterKey(key: String?, keyInputStream: InputStream?) {
-        mDatabaseKDB?.retrieveMasterKey(key, keyInputStream)
-        mDatabaseKDBX?.retrieveMasterKey(key, keyInputStream)
+    fun retrieveMasterKey(password: String?, keyInputStream: InputStream?, yubikeyResponse: ByteArray?) {
+        mDatabaseKDB?.retrieveMasterKey(password, keyInputStream, yubikeyResponse)
+        mDatabaseKDBX?.retrieveMasterKey(password, keyInputStream, yubikeyResponse)
     }
 
     fun rootCanContainsEntry(): Boolean {

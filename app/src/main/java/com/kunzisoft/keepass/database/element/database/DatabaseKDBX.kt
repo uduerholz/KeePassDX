@@ -457,19 +457,22 @@ class DatabaseKDBX : DatabaseVersioned<UUID, UUID, GroupKDBX, EntryKDBX> {
     }
 
     @Throws(IOException::class)
-    public override fun getMasterKey(key: String?, keyInputStream: InputStream?): ByteArray {
+    override fun deriveMasterKey(password: String?, keyInputStream: InputStream?, yubikeyResponse: ByteArray?): ByteArray {
+        var component1: ByteArray? = null
+        var component2: ByteArray? = null
+        var component3: ByteArray? = null
 
-        var masterKey = byteArrayOf()
-
-        if (key != null && keyInputStream != null) {
-            return getCompositeKey(key, keyInputStream)
-        } else if (key != null) { // key.length() >= 0
-            masterKey = getPasswordKey(key)
-        } else if (keyInputStream != null) { // key == null
-            masterKey = getFileKey(keyInputStream)
+        password?.let {
+            component1 = getPasswordKey(password)
+        }
+        keyInputStream?.let {
+            component2 = getFileKey(keyInputStream)
+        }
+        yubikeyResponse?.let {
+            component3 = HashManager.hashSha256(yubikeyResponse)
         }
 
-        return HashManager.hashSha256(masterKey)
+        return HashManager.hashSha256(component1, component2, component3)
     }
 
     @Throws(IOException::class)

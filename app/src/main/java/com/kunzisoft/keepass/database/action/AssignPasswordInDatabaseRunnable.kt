@@ -43,7 +43,7 @@ open class AssignPasswordInDatabaseRunnable (
             System.arraycopy(database.masterKey, 0, mBackupKey!!, 0, mBackupKey!!.size)
 
             val uriInputStream = UriUtil.getUriInputStream(context.contentResolver, mMainCredential.keyFileUri)
-            database.retrieveMasterKey(mMainCredential.masterPassword, uriInputStream)
+            database.retrieveMasterKey(mMainCredential.masterPassword, uriInputStream, mMainCredential.yubikeyResponse)
         } catch (e: Exception) {
             erase(mBackupKey)
             setError(e)

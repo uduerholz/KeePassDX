@@ -39,10 +39,12 @@ object HashManager {
         return messageDigest
     }
 
-    fun hashSha256(vararg data: ByteArray): ByteArray {
+    fun hashSha256(vararg data: ByteArray?): ByteArray {
         val hash: MessageDigest = getHash256()
         for (byteArray in data) {
-            hash.update(byteArray)
+            byteArray?.let {
+                hash.update(byteArray)
+            }
         }
         return hash.digest()
     }
